@@ -1,0 +1,34 @@
+---
+title: "Jobs"
+output:
+  postcards::solana
+---
+ 
+## Current Offers
+
+<h1 style="font-size:1.5rem; font-weight:700; margin-bottom:1rem;">
+  2025
+</h1>
+
+**Description:** Proposition for a 6 month internship for a master's student, co-supervised by myself and Boris Hejblum. The subject of the internship is the evaluation of individual-level surrogate markers of the vaccine response using supervised learning techniques. 
+
+<p>
+  <a href="internships/Internship_offer_25_26.pdf" target="_blank" rel="noopener noreferrer">View internship offer</a>
+</p>
+
+
+<hr style="border:0; height:3px;
+    background: linear-gradient(90deg, rgba(0,0,0,0.06), rgba(0,0,0,0.22), rgba(0,0,0,0.06));
+    margin:1.5rem 0;">
+
+## Past Offers
+
+<h1 style="font-size:1.5rem; font-weight:700; margin-bottom:4rem;">
+  2024
+</h1>
+
+**Description:** Proposition for a 6 month internship for a master's student, co-supervised by myself and Boris Hejblum. The subject of the internship was the identification and evaluation of high-dimensional trial-level surrogate markers of the vaccine response to yellow fever vaccination. The project was completed by Theodora Georgakopoulou. 
+
+<p>
+  <a href="internships/Internship_offer_24_25.pdf" target="_blank" rel="noopener noreferrer">View internship offer</a>
+</p>

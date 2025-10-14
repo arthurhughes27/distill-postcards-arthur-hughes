@@ -3,7 +3,6 @@ title: "Publications"
 output:
   postcards::solana
 ---
-
 **2025**
 
 **RISE: Two-Stage Rank-Based Identification of High-Dimensional Surrogate Markers Applied to Vaccinology**  

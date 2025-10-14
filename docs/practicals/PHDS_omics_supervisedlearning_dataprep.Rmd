@@ -1,0 +1,604 @@
+---
+title: "PHDS omics descriptive tools data preparation"
+author: "Arthur Hughes"
+date: "2025-10-02"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Here, I prepare some data for the practical for the M2 PHDS class "Descriptive tools for high dimensional data". 
+
+The goal of the practical will be to apply various supervised learning approaches to predicting the antibody response to influenza vaccination. 
+
+# Setup
+
+```{r}
+library(janitor)
+library(dplyr)
+library(forcats)
+library(stringr)
+library(readxl)
+library(tidyr)
+library(purrr)
+```
+
+## Load expression data
+
+First we load the gene expression and clinical data downloaded from the ImmuneSignatures2 page on ImmuneSpace. We use cross-study normalised expression data. 
+```{r}
+raw_data_directory = "C:/Users/arthu/Documents/Work/Teaching/M2 PHDS Final Resources/omics 2025/practicals/data/"
+
+processed_data_directory = "C:/Users/arthu/Documents/Work/Teaching/M2 PHDS Final Resources/omics 2025/practicals/data/"
+
+# For Prediction - All subjects, cross-study normalised data
+all_norm_eset = readRDS(file = paste0(raw_data_directory, "all_norm_eset.rds")) %>% clean_names()
+```
+
+## Clinical Data Pre-processing
+
+Some of the clinical data must be pre-processed. 
+
+Extract the clinical data for all subjects.
+```{r}
+hipc_clinical = as.data.frame(all_norm_eset@phenoData@data)
+```
+
+
+Let's start by standardising gender labels (where the gender is unknown, this is sometimes encoded as "Not Specified" and other times "Unknown"). We do the same for the "race" and "ethnicity" columns. 
+
+```{r}
+hipc_clinical$gender <- hipc_clinical$gender %>%
+  as.factor() %>%
+  fct_collapse(Unknown = c("Not Specified", "Unknown"))
+
+hipc_clinical$race <- hipc_clinical$race %>%
+  as.factor() %>%
+  fct_collapse("Unknown" = c("Not Specified", "Unknown"))
+
+hipc_clinical$ethnicity <- hipc_clinical$ethnicity %>%
+  as.factor() %>%
+  fct_collapse("Other" = c("Not Hispanic or Latino", "Other"))
+```
+
+Let's round the time variable to two decimal places to avoid long numbers. 
+
+```{r}
+hipc_clinical <- hipc_clinical %>% mutate(
+  study_time_collected = round(study_time_collected, 2),
+  time_post_last_vax = round(time_post_last_vax, 2)
+)
+```
+
+Now we derive the "vaccine name" which is a combination of the target pathogen and the vaccine platform. We also assign a colour to each vaccine name, trying to match the colours from the Hagan et al. 2022 paper figures. 
+
+```{r}
+# First abbreviate vaccine types to their initials
+hipc_clinical$vaccine_type <- hipc_clinical$vaccine_type %>%
+  as.factor() %>%
+  recode_factor(
+    "Conjugate" = "CJ",
+    "Inactivated" = "IN",
+    "Inactivated/Recombinant protein" = "IN/RP",
+    "Live virus" = "LV",
+    "Polysaccharide" = "PS",
+    "Recombinant Viral Vector" = "RVV",
+    "Recombinant protein" = "RP"
+  )
+
+# Create vaccine name by combining pathogen and vaccine type
+hipc_clinical <-
+  hipc_clinical %>% mutate(vaccine_name = str_c(pathogen, " (", vaccine_type, ")"))
+
+# Set an order for the vaccines
+conditions_order <- c(
+  "Tuberculosis (RVV)",
+  "Varicella Zoster (LV)",
+  "Yellow Fever (LV)",
+  "Ebola (RVV)",
+  "Hepatitis A/B (IN/RP)",
+  "HIV (RVV)",
+  "Influenza (IN)",
+  "Influenza (LV)",
+  "Malaria (RP)",
+  "Meningococcus (CJ)",
+  "Meningococcus (PS)",
+  "Pneumococcus (PS)",
+  "Smallpox (LV)"
+)
+
+
+hipc_clinical <- hipc_clinical %>%
+  mutate(vaccine_name = factor(vaccine_name, levels = conditions_order))
+
+color_palette = c(
+  "#b94a73",
+  "#c6aa3c",
+  "#6f71d9",
+  "#64c46a",
+  "#be62c2",
+  "#7d973c",
+  "#563382",
+  "#4ea76e",
+  "#bc69b0",
+  "#33d4d1",
+  "#bb4c41",
+  "#6a87d3",
+  "#b57736"
+)
+
+assign_color <- function(vaccine_name) {
+  return(color_palette[match(hipc_clinical$vaccine_name,
+                             levels(hipc_clinical$vaccine_name))])
+}
+
+hipc_clinical$vaccine_colour <-
+  assign_color(hipc_clinical$vaccine_name)
+```
+
+
+## Immune response data
+
+Since participants may have different types as well as numbers and timepoints of immune response measurements, we derive a "max fold change" which represents the maximum ratio of the participant's baseline to post-vaccination immune response. We load the raw immune response files. 
+
+```{r}
+# HAI response data
+response_hai = read_excel(paste0(raw_data_directory, "hai_2025-01-10_01-13-41.xlsx")) %>%
+  clean_names()
+
+# Neutralising antibody response data
+response_nAb = read_excel(paste0(
+  raw_data_directory,
+  "neut_ab_titer_2025-01-10_01-13-22.xlsx"
+)) %>%
+  clean_names()
+
+# ELISA response data
+response_elisa = read_excel(paste0(raw_data_directory, "elisa_2025-01-10_01-14-21.xlsx")) %>%
+  clean_names()
+```
+
+We can filter the participants by those with gene expression data available.
+
+```{r}
+# Find identifiers of participants with gene expression measurements
+participants = hipc_clinical$participant_id %>%
+  unique()
+
+# Filter immune response data by these participants
+response_hai = response_hai %>%
+  filter(participant_id %in% participants)
+
+response_nAb = response_nAb %>%
+  filter(participant_id %in% participants)
+
+response_elisa = response_elisa %>%
+  filter(participant_id %in% participants)
+```
+
+Depending on the assay, there may be multiple viral strains or analytes measured. We rename some columns and add a column for the assay name, so that we can merge these data together.  
+
+```{r}
+response_hai = response_hai %>%
+  rename(response_strain_analyte = virus) %>%
+  mutate(assay = "hai")
+
+response_nAb = response_nAb %>%
+  rename(response_strain_analyte = virus) %>%
+  mutate(assay = "nAb")
+
+# Filter ELISA data for IgG and Hepatitis B antibodies
+response_elisa = response_elisa %>%
+  filter(grepl("IgG", analyte) |
+           analyte == "Hepatitis B Virus Surface Antibody") %>%
+  rename(response_strain_analyte = analyte) %>%
+  mutate(assay = "elisa") 
+```
+
+Let's bind these together and get the study identifiers. 
+
+```{r}
+# Now merge all the raw response data
+response_raw_merged = bind_rows(response_nAb,
+                                response_elisa,
+                                response_hai) %>%
+  arrange(participant_id) %>%
+  distinct()
+
+# First get the studies and other clinical data corresponding to each participant id
+hipc_studies = hipc_clinical %>%
+  dplyr::select(participant_id,
+         study_accession,
+         vaccine,
+         vaccine_type,
+         pathogen) %>%
+  distinct()
+
+# Merge the study names into the immune response data (it is not directly given)
+response_raw_merged_studies = merge(x = response_raw_merged,
+                                    y = hipc_studies,
+                                    by = "participant_id",
+                                    all = F)
+```
+
+There are a series of study-specific errors which have been inferred from the "immuneResponseCallGeneration.R" script in the ImmuneSignatures2 GitHub page. We fix these here. 
+
+First, "SDY1276" is apparently scaled in log4. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(value_preferred = if_else(
+    study_accession == "SDY1276",
+    4 ^ value_preferred,
+    value_preferred
+  ))
+```
+
+Next, "SDY1289" has some nAb baseline values at exactly 0, these are set to 1. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(value_preferred = if_else(
+    (
+      study_accession == "SDY1289" &
+        value_preferred == 0 &
+        as.numeric(study_time_collected) == 0
+    ) ,
+    1,
+    value_preferred
+  ))
+```
+
+"SDY1264" lacks baseline data. The investigators create this row, where the baseline value is set to 1 for everyone. 
+
+```{r}
+day_zero <- response_raw_merged_studies %>%
+  filter(study_accession == "SDY1264") %>%        # pull out SDY1264
+  distinct(participant_id, .keep_all = TRUE) %>%   # keep only one row per participant
+  mutate(
+    study_time_collected = 0,                   # reset time to “0”
+    value_preferred      = 1                     # set preferred value to 1
+  )
+
+# Bind them back on to the full dataset
+response_raw_merged_studies <- bind_rows(
+  response_raw_merged_studies,
+  day_zero
+)
+```
+
+"SDY1328" has an incorrect time label. Apparently, the data which is claimed to be taken at day 7 should actually be at day 30. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(study_time_collected = if_else(
+    (study_accession == "SDY1328" &
+       study_time_collected == 7) ,
+    30,
+    study_time_collected
+  ))
+```
+
+Additionally, this study has some anomalies at day 0, where data suggests these participants have antibody responses prior to vaccination. The investigators set baseline values as well as values of 2.5 to 1. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(value_preferred = if_else((
+    study_accession == "SDY1328" &
+      (value_preferred == 2.5 | study_time_collected == 0)
+  ),
+  1,
+  value_preferred))
+```
+
+Furthermore, apparently these values need to be transformed with log2. This also applies to SDY984. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(value_preferred = if_else(((study_accession == "SDY1328" |
+                                       study_accession == "SDY984") &
+                                      assay == "elisa"
+  ),
+  log2(value_preferred),
+  value_preferred))
+```
+
+
+For "SDY1260", the values need to be de-transformed from log2. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  mutate(value_preferred = if_else(
+    (study_accession == "SDY1260" &
+       assay == "elisa"),
+    2 ^ value_preferred,
+    value_preferred
+  ))
+```
+
+Furthermore, the IgG serotype values need to be summed within each participant, timepoint, and vaccine. 
+
+```{r}
+response_raw_merged_studies <- response_raw_merged_studies %>%
+  group_by(participant_id,
+           study_time_collected,
+           vaccine,
+           vaccine_type,
+           pathogen) %>%
+  mutate(value_preferred = if_else(
+    (study_accession == "SDY1260" & assay == "elisa"),
+    # sum only the SDY1260 values within this group, then log2
+    log2(sum(value_preferred[study_accession == "SDY1260"])),
+    # otherwise leave unchanged
+    value_preferred
+  )) %>%
+  ungroup()
+```
+
+Now all the errors have been fixed, we can go back to processing the data. 
+
+We intend to predict on immune response data at day 28 (plus or minus 7 days), so we filter to get the immune data at these timepoints or pre-vaccination. 
+
+```{r}
+response_raw_merged_studies = response_raw_merged_studies %>%
+  filter((study_time_collected < 36 &
+            study_time_collected > 20) | study_time_collected <= 0)
+
+response_raw_merged = response_raw_merged_studies %>%
+  dplyr::select(-c(study_accession, vaccine, vaccine_type, pathogen))
+```
+
+Now we derive the maximum fold change values. For a given participant, we first calculate the fold changes as the ratios between each post-vaccination measurement and pre-vaccination measurement (within assay/strain-analyte). If a participant has multiple pre-vaccination measurements, we take the most recent one. 
+
+Now split the measurements into pre- and post-vaccination measurements. For the pre-vaccination measurements, take the most recent only within each assay/strain-analyte.
+```{r}
+pre_vax <- response_raw_merged %>%
+  filter(study_time_collected <= 0) %>%
+  group_by(participant_id, assay, response_strain_analyte) %>%
+  slice_max(study_time_collected, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(response_MFC_pre_value = value_preferred,
+         response_MFC_pre_time = study_time_collected)
+
+post_vax <- response_raw_merged %>%
+  filter(study_time_collected > 0) %>%
+  rename(response_MFC_post_value = value_preferred,
+         response_MFC_post_time = study_time_collected)
+```
+
+Now we merge pre- and post- values to get a dataframe in wide format with one line per unique combination of participant/assay/strain-analyte
+```{r}
+merged_vax <- full_join(
+  pre_vax,
+  post_vax,
+  by = c("participant_id", "response_strain_analyte", "assay"),
+  relationship = "many-to-many"
+) %>%
+  dplyr::select(
+    participant_id,
+    assay,
+    response_strain_analyte,
+    response_MFC_pre_time,
+    response_MFC_post_time,
+    response_MFC_pre_value,
+    response_MFC_post_value
+  )
+```
+
+Now we can exclude any rows with NA values in either pre- or post-.
+```{r}
+merged_vax = merged_vax %>%
+  filter(!is.na(response_MFC_pre_value),!is.na(response_MFC_post_value))
+```
+
+Here we calculate the (log2) fold changes. If both pre-and post- values are 0, set fold change to 1. If only the pre- value is 0, set the fold change to the post- value. The other option would be to discard any row with 0 in either pre- or post-.
+```{r}
+response_MFC_df <- merged_vax %>%
+  mutate(
+    # Define fold change
+    response_MFC = response_MFC_post_value / response_MFC_pre_value,
+    # If pre-vaccination value is 0, set fold change to post-vaccination value
+    response_MFC = ifelse(
+      is.infinite(response_MFC),
+      response_MFC_post_value,
+      response_MFC
+    ),
+    # Set fold change to 1 if both response_MFC_pre_value and response_MFC_post_value are 0
+    response_MFC = ifelse(
+      response_MFC_pre_value == 0 &
+        response_MFC_post_value == 0,
+      1,
+      response_MFC
+    )
+  ) %>%
+  # Calculate log2 fold change
+  mutate(
+    response_log2_MFC = log2(response_MFC),
+    response_log2_MFC = ifelse(is.infinite(response_log2_MFC), NA, response_log2_MFC)
+  ) %>%
+  # Select relevant columns
+  dplyr::select(
+    participant_id,
+    response_strain_analyte,
+    assay,
+    response_MFC_pre_time,
+    response_MFC_post_time,
+    response_MFC_pre_value,
+    response_MFC_post_value,
+    response_MFC,
+    response_log2_MFC
+  )
+```
+
+Now, for each participant, we can derive the maximum of these fold changes. 
+
+```{r}
+max_response_MFC_df <- response_MFC_df %>%
+  group_by(participant_id) %>%
+  slice_max(response_MFC, n = 1, with_ties = F) %>%
+  ungroup() 
+```
+
+Now we merge the clinical, response, and expression dataframes. 
+```{r}
+hipc_clinical_MFC <- hipc_clinical %>%
+  left_join(max_response_MFC_df, by = "participant_id")
+
+# For prediction - need to merge all subject, normalised expression data to response data and clinical data
+expression_all_norm = as.data.frame(t(all_norm_eset@assayData[["exprs"]]))
+# Bind the two dataframes
+merged_hipc_all_norm = bind_cols(hipc_clinical_MFC, expression_all_norm)
+
+```
+
+Finally unload all the useless data from this step. 
+```{r}
+rm(
+  response_hai,
+  response_nAb,
+  response_elisa,
+  hipc_clinical,
+  response_raw_merged,
+  hipc_studies,
+  response_raw_merged_studies,
+  pre_vax,
+  post_vax,
+  merged_vax,
+  response_MFC_df,
+  max_response_MFC_df,
+  hipc_clinical_MFC,
+  expression_all_norm,
+  all_norm_eset,
+  day_zero,
+  color_palette,
+  participants,
+  assign_color,
+  conditions_order
+)
+
+gc()
+```
+
+# Derive gene-wise FC
+
+```{r}
+# user-defined timepoints
+timepoints_of_interest <- c(1, 3, 7)
+
+# times to keep (baseline candidates + target timepoints)
+times_to_keep <- unique(c(-7, 0, timepoints_of_interest))
+
+# select needed columns and restrict to relevant times
+merged_hipc_all_norm_selected <- merged_hipc_all_norm %>%
+  dplyr::select(
+    participant_id,
+    study_time_collected,
+    study_accession,
+    vaccine_name,
+    gender,
+    age_imputed,
+    response_log2_MFC,
+    a1cf:zzz3
+  ) %>%
+  filter(study_time_collected %in% times_to_keep)
+
+# get predictor names (genes)
+predictors <-
+  merged_hipc_all_norm_selected %>% dplyr::select(a1cf:zzz3) %>% names()
+
+# build baseline per participant: prefer -7, else 0; drop participants without either
+baseline_df <- merged_hipc_all_norm_selected %>%
+  filter(study_time_collected %in% c(-7, 0)) %>%
+  mutate(.baseline_rank = if_else(study_time_collected == -7, 1L, 2L)) %>%
+  group_by(participant_id) %>%
+  slice_min(.baseline_rank, with_ties = FALSE) %>%  # choose -7 if present, else 0
+  ungroup() %>%
+  select(participant_id, all_of(predictors)) # keep only participant id + gene columns for baseline
+
+# create a named list to collect results
+fc_list <- list()
+
+for (tp in timepoints_of_interest) {
+  # measurements at timepoint tp
+  tp_df <- merged_hipc_all_norm_selected %>%
+    filter(study_time_collected == tp) %>%
+    select(
+      participant_id,
+      study_accession,
+      vaccine_name,
+      gender,
+      age_imputed,
+      response_log2_MFC,
+      all_of(predictors)
+    )
+  
+  # inner join with baseline -> keeps only participants with both baseline and tp
+  joined <-
+    inner_join(tp_df,
+               baseline_df,
+               by = "participant_id",
+               suffix = c("_tp", "_base"))
+  
+  # compute fold-change columns: predictor_tp - predictor_base
+  for (p in predictors) {
+    col_tp <- paste0(p, "_tp")
+    col_base <- paste0(p, "_base")
+    col_fc  <- paste0(p, "_fc")
+    # safe subtraction even if there are NAs
+    joined[[col_fc]] <- joined[[col_tp]] - joined[[col_base]]
+    
+    # print(p)
+  }
+  
+  # assemble final dataframe for this timepoint
+  final_df <- joined %>%
+    transmute(
+      participant_id,
+      study_accession   = study_accession,
+      vaccine_name      = vaccine_name,
+      gender            = gender,
+      age_imputed       = age_imputed,
+      response_log2_MFC = response_log2_MFC,
+      across(ends_with("_fc"))
+    ) %>%
+    # drop the "_fc" suffix from gene columns
+    rename_with( ~ sub("_fc$", "", .), .cols = ends_with("_fc"))
+  
+  # store in list with name like "t1", "t3", "t7"
+  fc_list[[paste0("t", tp)]] <- final_df
+  
+  print(paste0("Timepoint ", tp, " finished."))
+}
+```
+
+Save the processed data frame.
+```{r}
+save(
+  fc_list,
+  file = paste0(processed_data_directory, "hipc_fc_137.RData")
+)
+```
+
+# Choose a specific study
+
+I choose SDY1119 at day 7. 
+
+```{r}
+df_SDY1119 = hipc_fc_137[["t7"]] %>%
+  filter(study_accession == "SDY1119") %>%
+  mutate(response = response_log2_MFC,
+         sex = gender,
+         age = age_imputed) %>%
+  dplyr::select(participant_id,
+         sex, 
+         age,
+         response,
+         a1cf:zzz3) 
+```
+
+```{r}
+save(
+  df_SDY1119,
+  file = paste0(processed_data_directory, "SDY1119_day7_GE_foldChange.RData")
+)
+```

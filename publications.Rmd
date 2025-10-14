@@ -3,3 +3,10 @@ title: "Publications"
 output:
   postcards::solana
 ---
+
+**2025**
+
+**RISE: Two-Stage Rank-Based Identification of High-Dimensional Surrogate Markers Applied to Vaccinology**  
+Hughes, A., Parast, L., Thiébaut, R., and Hejblum, B.P.  
+*Statistics in Medicine*, **44**(20–22), 2025.  
+[doi:10.1002/sim.70241](https://doi.org/10.1002/sim.70241)

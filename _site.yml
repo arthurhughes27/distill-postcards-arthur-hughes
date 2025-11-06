@@ -16,3 +16,5 @@ navbar:
     - text: "Jobs"
       href: jobs.html
 output: distill::distill_article
+  includes: 
+    in_header: google_verification.html

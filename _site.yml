@@ -18,4 +18,6 @@ navbar:
 
 output:
   distill::distill_article:
+  includes:
+  in_header: "_includes/google_verification.html"
 

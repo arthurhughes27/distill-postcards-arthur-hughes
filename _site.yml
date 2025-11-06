@@ -19,5 +19,5 @@ navbar:
 output:
   distill::distill_article:
     includes:
-      in_header: google_verification.html
+      in_header: google97a973e29e9d3c76.html
 
